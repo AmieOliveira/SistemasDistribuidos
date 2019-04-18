@@ -27,6 +27,10 @@ args = parser.parse_args()
 if __name__ == "__main__":
     N = args.N
 
+    outRoot = "latencyGraph"
+    if args.outputFileRoot != "":
+        outRoot = args.outputFileRoot
+
     # Variables to be filled
     nThrVec = []
     timesDict = {}
@@ -80,5 +84,5 @@ if __name__ == "__main__":
     # plt.xlabel(r'N\'{u}mero de threads')
     # plt.ylabel(r'Tempo de execu\c{c}\~{a}o (s)')
     plt.subplots_adjust(left=0.1, right=0.94, top=0.89)
-    outputFileName = "%s_%ielements.pdf"%(args.outputFileRoot, N)
+    outputFileName = "%s_%ielements.pdf"%(outRoot, N)
     fig.savefig(outputFileName)
