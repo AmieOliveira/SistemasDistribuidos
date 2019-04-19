@@ -1,0 +1,5 @@
+To run the code one only needs to run either main.cpp or semaphore.cpp. semaphore.cpp is less stable, 
+but runs on MacOS. main.cpp has been tested on Ubuntu.
+graph.py is an auxiliar code to create graphs once you've successfully ran your cpp chosen file.
+Note though that get a graph with several memory sizes they must all have data for the same 
+combination of the number of producers and consumers threads.
