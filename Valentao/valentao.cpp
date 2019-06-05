@@ -8,8 +8,11 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <termios.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 
 #include "valentao.h"
+
 
 using namespace std;
 
@@ -84,6 +87,83 @@ void interface(){
 }
 
 
+void communication(){
+    /*
+     *  Thread responsible for receiving messages from other processes and
+     *
+     */
+    while(1){
+        // Reading message from socket
+        read(sockfd, messageBuffer, messageLength);
+        //printf("Message: %s\n", messageBuffer);
+
+        // Interpreting message
+        char* msgPart = strtok(messageBuffer, delimiter);
+        int msgT = atoi(msgPart);   // Message type number
+
+        msgPart = strtok(NULL, delimiter);
+        int msgSender = atoi(msgPart);
+
+        if (msgT == m_eleicao){
+            msgPart = strtok(NULL, delimiter);
+            int elecValueReceived = atoi(msgPart);
+            // TODO: Deal with this case
+
+        } else if (msgT == m_ok){
+            // TODO: Deal with this case
+
+        } else if (msgT == m_lider){
+            // TODO: Deal with this case
+
+        } else if (msgT == m_vivo){
+            // TODO: Deal with this case
+
+        }   else if (msgT == m_vivo_ok){
+            // TODO: Deal with this case
+
+        }
+    }
+}
+
+
 int main(int argc, char* argv[]){
-    interface();
+    // TODO: Function arguments
+    int myPort = 8080;
+    messageLength = 1024;
+    messageBuffer = new char[messageLength];
+    delimiter = "|";
+    // ----
+
+    if ( setupSocket(myPort) == -1 ){
+        // cout << "ERROR: Could not setup socket" << endl;
+        exit(1);
+    }
+
+    communication();
+    // interface();
+}
+
+
+
+
+
+
+// Auxiliary Functions ----------------------------------------------------------
+
+int setupSocket(int port){
+    struct sockaddr_in address;
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = INADDR_ANY;
+    address.sin_port = htons( port );
+
+    int opt = 1;
+
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+
+    if ( bind( sockfd, (struct sockaddr *)&address, sizeof(address) ) < 0 ){
+        cout << "ERROR: Unable to bind socket" << endl;
+        perror("bind failed");
+        return -1;
+    }
+    return 0;
 }
