@@ -10,6 +10,7 @@
 #include <termios.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
 
 #include "valentao.h"
 
@@ -90,16 +91,33 @@ void interface(){
 void communication(){
     /*
      *  Thread responsible for receiving messages from other processes and
-     *
+     *  Flag 1 -> Send ack for confirmation
      */
-    while(1){
-        // Reading message from socket
-        read(sockfd, messageBuffer, messageLength);
-        //printf("Message: %s\n", messageBuffer);
+    struct sockaddr_in client_address;
+    socklen_t addrlen = sizeof(client_address);
+    int totCount = 0;
+
+    while (true){
+        char buffer[messageLength];
+        // read content into buffer from an incoming client
+        int recvlen = recvfrom(server_socket, buffer, sizeof(buffer), 0,
+                             (struct sockaddr *)&client_address,
+                             &addrlen);
+        // inet_ntoa prints user friendly representation of the
+        // ip address
+        if (recvlen>0){
+          buffer[recvlen] = 0;
+          printf("received: '%s' from client %s , Count:%d\n", buffer,
+                 inet_ntoa(client_address.sin_addr),totCount);
+        }
+        totCount++;
 
         // Interpreting message
-        char* msgPart = strtok(messageBuffer, delimiter);
+        char* msgPart = strtok(buffer, delimiter);
         int msgT = atoi(msgPart);   // Message type number
+
+        // TODO: Put lock!!!
+        msgCount[msgT]++;
 
         msgPart = strtok(NULL, delimiter);
         int msgSender = atoi(msgPart);
@@ -107,16 +125,48 @@ void communication(){
         if (msgT == m_eleicao){
             msgPart = strtok(NULL, delimiter);
             int elecValueReceived = atoi(msgPart);
-            // TODO: Deal with this case
+
+            // If ID is bigger than the received, should initiate election
+            if (selfID > elecValueReceived){
+                // TODO: Sleep shortly to avoid sending too many elections
+
+                // Checking if has sent this election message already
+                bool messageSent = false;
+                for (int i; i<ongoingElections.size(); i++){
+                    if (ongoingElections[i] == msgSender) messageSent = true;
+                }
+
+                if (!messageSent){ // Hasn't sent messages for this election
+                    char outMsg[messageLength];
+                    printf( outMsg, "%i%s%i%s%i%s",
+                            m_eleicao, delimiter,
+                            msgSender, delimiter,
+                            selfID, delimiter );
+                    //sendto(); BROADCAST
+                    ongoingElections.push_back(msgSender);
+                    // TODO: Start time counting to see if will be leader
+                    // NOTE: WHERE IS THIS TIMER HANDLED??
+                }
+            }
+            // If ID is smaller than received it makes no sense to do anything else
 
         } else if (msgT == m_ok){
-            // TODO: Deal with this case
+            // TODO: Stop election time counting
+            ongoingElections.erase( std::remove(ongoingElections.begin(),
+                                                ongoingElections.end(), msgSender),
+                                    ongoingElections.end() ); // Taken out of elections
 
         } else if (msgT == m_lider){
-            // TODO: Deal with this case
+            // Update leader ID
+            leaderID = msgSender;
+            // TODO: Implement locks!!
 
         } else if (msgT == m_vivo){
-            // TODO: Deal with this case
+            // In this case I am the leader myself, so I should answer the inquiry
+            char outMsg[messageLength];
+            printf( outMsg, "%i%s%i%s",
+                    m_vivo, delimiter, selfID, delimiter);
+            // TODO: Send message.........
 
         }   else if (msgT == m_vivo_ok){
             // TODO: Deal with this case
@@ -128,18 +178,38 @@ void communication(){
 
 int main(int argc, char* argv[]){
     // TODO: Function arguments
-    int myPort = 8080;
+    int myServerPort = 8080;
+    int sendPort = 8080;
     messageLength = 1024;
     messageBuffer = new char[messageLength];
-    delimiter = "|";
+    delimiter = "\n";
     // ----
 
-    if ( setupSocket(myPort) == -1 ){
-        // cout << "ERROR: Could not setup socket" << endl;
-        exit(1);
-    }
+    selfID = myServerPort; // TODO: Change this
 
-    communication();
+    if (argc < 2){
+        printf("Enter a valid integer.");
+        return 0;
+    }
+    int numTimes = atoi(argv[1]);
+    if(argc > 2){
+        sendPort = atoi(argv[2]);
+    }
+    // ----
+
+    ProcessClient P1(0,"Processo1",sendPort);
+    ProcessClient P2(0,"Processo2",sendPort);
+    //std::cout<<numTimes<<endl;
+    if (numTimes==1){
+        if ( setupServerSocket(myServerPort) == -1 ){
+            cout << "ERROR: Could not setup socket" << endl;
+            exit(1);
+        }
+        //receiveMsgFromClients(0);
+    } //else {
+      //  setupClientSocket(P1);
+      //  sendMsgToClient(0,P1);
+    //}
     // interface();
 }
 
@@ -150,20 +220,86 @@ int main(int argc, char* argv[]){
 
 // Auxiliary Functions ----------------------------------------------------------
 
-int setupSocket(int port){
+int setupServerSocket(int port){
+    /*
+     *  Thread responsible for create a server socket
+     *
+     */
     struct sockaddr_in address;
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
     address.sin_port = htons( port );
-
-    int opt = 1;
-
-    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-
-    if ( bind( sockfd, (struct sockaddr *)&address, sizeof(address) ) < 0 ){
+    server_socket = socket(AF_INET, SOCK_DGRAM, 0);
+    if ( bind( server_socket, (struct sockaddr *)&address, sizeof(address) ) < 0 ){
         cout << "ERROR: Unable to bind socket" << endl;
         perror("bind failed");
         return -1;
     }
     return 0;
+}
+
+
+int setupClientSocket(ProcessClient& clientProcess){
+    /*
+     *  Thread responsible for create a client socket
+     *
+     */
+    //struct sockaddr_in myaddr;
+    int port = clientProcess.myport;
+    int client_socket;
+    int recvlen;		/* # bytes in acknowledgement message */
+    char server[] = "127.0.0.1";	/* change this to use a different server */
+    if ((client_socket=socket(AF_INET, SOCK_DGRAM, 0))==-1){
+        printf("socket created\n");
+    }
+    memset( (char *)&clientProcess.myaddr, 0, sizeof(clientProcess.myaddr) );
+	  clientProcess.myaddr.sin_family = AF_INET;
+	  clientProcess.myaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+    clientProcess.myaddr.sin_port = htons(0);
+    if ( bind(client_socket, (struct sockaddr *)&clientProcess.myaddr,
+              sizeof(clientProcess.myaddr)) < 0 ){
+        perror("bind failed");
+        exit(0);
+    }
+    //client_sockets.push_back(client_socket);
+    clientProcess.client_socket_ID=client_socket;
+    return 1;
+}
+
+
+void sendMsgToClient(int flag, ProcessClient& clientProcess){
+    /*
+     *  Thread responsible for sending msg in a client socket
+     *
+     */
+    //struct sockaddr_in remaddr;
+    int port=clientProcess.myport;
+    socklen_t addrlen = sizeof(clientProcess.remaddr);
+    memset((char *) &clientProcess.remaddr, 0, sizeof(clientProcess.remaddr));
+    char client_buffer[messageLength];	/* message buffer */
+	  clientProcess.remaddr.sin_family = AF_INET;
+	  clientProcess.remaddr.sin_port = htons(port);
+    char server[] = "127.0.0.1";
+    int recvlen;
+    //int count=0;
+    //int temp_client_socket = client_sockets.back();
+    if (inet_aton(server, &clientProcess.remaddr.sin_addr)==0){
+        fprintf(stderr, "inet_aton() failed\n");
+        exit(1);
+	  }
+    printf("Sending packet %d to %s on port %d\n", outMsgCount, server, port);
+    sprintf(client_buffer, "This is packet %d", outMsgCount);
+    if (sendto(clientProcess.client_socket_ID, client_buffer, strlen(client_buffer), 0, (struct sockaddr *)&clientProcess.remaddr, addrlen)==-1) {
+        perror("sendto");
+        exit(1);
+	  }
+    outMsgCount++;
+    /* now receive an acknowledgement from the server */
+    if(flag==1){
+	      recvlen = recvfrom(clientProcess.client_socket_ID, client_buffer, messageLength, 0, (struct sockaddr *)&clientProcess.remaddr, &addrlen);
+        if (recvlen >= 0){
+            client_buffer[recvlen] = 0;	/* expect a printable string - terminate it */
+            printf("received message: \"%s\"\n", client_buffer);
+        }
+    }
 }
