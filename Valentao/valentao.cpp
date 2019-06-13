@@ -11,6 +11,8 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <sstream>
+
 
 #include "valentao.h"
 
@@ -138,10 +140,10 @@ void communication(){
 
                 if (!messageSent){ // Hasn't sent messages for this election
                     char outMsg[messageLength];
-                    printf( outMsg, "%i%s%i%s%i%s",
-                            m_eleicao, delimiter,
-                            msgSender, delimiter,
-                            selfID, delimiter );
+                    sprintf( outMsg, "%i%s%i%s%i%s",
+                             m_eleicao, delimiter,
+                             msgSender, delimiter,
+                             selfID, delimiter );
                     //sendto(); BROADCAST
                     ongoingElections.push_back(msgSender);
                     // TODO: Start time counting to see if will be leader
@@ -152,20 +154,22 @@ void communication(){
 
         } else if (msgT == m_ok){
             // TODO: Stop election time counting
+            //       Or turn on OK flag!
+            // TODO: Check if this erasing should't be done after some thread notices the election is over or something
             ongoingElections.erase( std::remove(ongoingElections.begin(),
                                                 ongoingElections.end(), msgSender),
                                     ongoingElections.end() ); // Taken out of elections
 
         } else if (msgT == m_lider){
             // Update leader ID
-            leaderID = msgSender;
+            //leaderID = msgSender;   IDEALLY THE IDENTIFICATION SHOULD BE AN EASY WAY TO GET THE LEADER FROM THE PROCESSES ARRAY
             // TODO: Implement locks!!
 
         } else if (msgT == m_vivo){
             // In this case I am the leader myself, so I should answer the inquiry
             char outMsg[messageLength];
-            printf( outMsg, "%i%s%i%s",
-                    m_vivo, delimiter, selfID, delimiter);
+            sprintf( outMsg, "%i%s%i%s",
+                     m_vivo, delimiter, selfID, delimiter );
             // TODO: Send message.........
 
         }   else if (msgT == m_vivo_ok){
@@ -179,7 +183,7 @@ void communication(){
 int main(int argc, char* argv[]){
     // TODO: Function arguments
     int myServerPort = 8080;
-    int sendPort = 8080;
+    int sendPorts[N_PROC-1] = {8081, 8082, 8083, 8084};
     messageLength = 1024;
     messageBuffer = new char[messageLength];
     delimiter = "\n";
@@ -187,28 +191,33 @@ int main(int argc, char* argv[]){
 
     selfID = myServerPort; // TODO: Change this
 
-    if (argc < 2){
-        printf("Enter a valid integer.");
-        return 0;
-    }
+    //if (argc < 2){
+    //    printf("Enter a valid integer.");
+    //    return 0;
+    //}
     int numTimes = atoi(argv[1]);
-    if(argc > 2){
-        sendPort = atoi(argv[2]);
-    }
+    //if(argc > 2){
+    //    sendPort = atoi(argv[2]);
+    //}
     // ----
 
-    ProcessClient P1(0,"Processo1",sendPort);
-    ProcessClient P2(0,"Processo2",sendPort);
+    for (int i = 0; i < N_PROC-1; i++){
+        std::stringstream procName;
+        procName << "Processo" << i;
+        ProcessClient Proc(sendPorts[i], procName.str());
+        processes.push_back(Proc);
+    }
+
     //std::cout<<numTimes<<endl;
-    if (numTimes==1){
-        if ( setupServerSocket(myServerPort) == -1 ){
-            cout << "ERROR: Could not setup socket" << endl;
-            exit(1);
-        }
-        //receiveMsgFromClients(0);
-    } //else {
-      //  setupClientSocket(P1);
-      //  sendMsgToClient(0,P1);
+    //if (numTimes==1){
+    //    if ( setupServerSocket(myServerPort) == -1 ){
+    //        cout << "ERROR: Could not setup socket" << endl;
+    //        exit(1);
+    //    }
+    //    //receiveMsgFromClients(0);
+    //} //else {
+    //  //  setupClientSocket(P1);
+    //  //  sendMsgToClient(0,P1);
     //}
     // interface();
 }
@@ -302,4 +311,39 @@ void sendMsgToClient(int flag, ProcessClient& clientProcess){
             printf("received message: \"%s\"\n", client_buffer);
         }
     }
+}
+
+
+
+
+// ProcessClient class
+ProcessClient::ProcessClient(int port, string name){
+    myPid = getpid();
+    processName = name;
+    myport = port;
+}
+
+int ProcessClient::getPid(){ // NOTE: What is the usage of this?
+    return (int)myPid;
+}
+
+int ProcessClient::sendMessage(char client_buffer[messageLength]){
+    socklen_t addrlen = sizeof(remaddr);
+    memset((char *) &remaddr, 0, sizeof(remaddr));
+    remaddr.sin_family = AF_INET;
+	  remaddr.sin_port = htons(myport);
+    char server[] = "127.0.0.1";
+    int recvlen;
+
+    if (inet_aton(server, &remaddr.sin_addr)==0){
+        fprintf(stderr, "inet_aton() failed\n");
+        return 1;
+	  }
+
+    if (sendto(client_socket_ID, client_buffer, strlen(client_buffer), 0, (struct sockaddr *)&remaddr, addrlen)==-1) {
+        perror("sendto");
+        return 1;
+	  }
+
+    return 0; // If everything went fine
 }
