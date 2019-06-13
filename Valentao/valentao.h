@@ -19,6 +19,7 @@ public:
     ProcessClient(int port, std::string name);
     int getPid();
     int sendMessage(char* msg);
+    int setupClientSocket();
 };
 
 

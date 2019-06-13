@@ -12,6 +12,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sstream>
+#include <algorithm>
 
 
 #include "valentao.h"
@@ -115,6 +116,8 @@ void communication(){
         totCount++;
 
         // Interpreting message
+        try
+        {
         char* msgPart = strtok(buffer, delimiter);
         int msgT = atoi(msgPart);   // Message type number
 
@@ -123,59 +126,64 @@ void communication(){
 
         msgPart = strtok(NULL, delimiter);
         int msgSender = atoi(msgPart);
-
-        if (msgT == m_eleicao){
-            msgPart = strtok(NULL, delimiter);
-            int elecValueReceived = atoi(msgPart);
-
-            // If ID is bigger than the received, should initiate election
-            if (selfID > elecValueReceived){
-                // TODO: Sleep shortly to avoid sending too many elections
-
-                // Checking if has sent this election message already
-                bool messageSent = false;
-                for (int i; i<ongoingElections.size(); i++){
-                    if (ongoingElections[i] == msgSender) messageSent = true;
-                }
-
-                if (!messageSent){ // Hasn't sent messages for this election
-                    char outMsg[messageLength];
-                    sprintf( outMsg, "%i%s%i%s%i%s",
-                             m_eleicao, delimiter,
-                             msgSender, delimiter,
-                             selfID, delimiter );
-                    //sendto(); BROADCAST
-                    ongoingElections.push_back(msgSender);
-                    // TODO: Start time counting to see if will be leader
-                    // NOTE: WHERE IS THIS TIMER HANDLED??
-                }
-            }
-            // If ID is smaller than received it makes no sense to do anything else
-
-        } else if (msgT == m_ok){
-            // TODO: Stop election time counting
-            //       Or turn on OK flag!
-            // TODO: Check if this erasing should't be done after some thread notices the election is over or something
-            ongoingElections.erase( std::remove(ongoingElections.begin(),
-                                                ongoingElections.end(), msgSender),
-                                    ongoingElections.end() ); // Taken out of elections
-
-        } else if (msgT == m_lider){
-            // Update leader ID
-            //leaderID = msgSender;   IDEALLY THE IDENTIFICATION SHOULD BE AN EASY WAY TO GET THE LEADER FROM THE PROCESSES ARRAY
-            // TODO: Implement locks!!
-
-        } else if (msgT == m_vivo){
-            // In this case I am the leader myself, so I should answer the inquiry
-            char outMsg[messageLength];
-            sprintf( outMsg, "%i%s%i%s",
-                     m_vivo, delimiter, selfID, delimiter );
-            // TODO: Send message.........
-
-        }   else if (msgT == m_vivo_ok){
-            // TODO: Deal with this case
-
         }
+        catch(...)
+        {
+            std::cout<<"Error"<<std::endl;
+        }
+
+        // if (msgT == m_eleicao){
+        //     msgPart = strtok(NULL, delimiter);
+        //     int elecValueReceived = atoi(msgPart);
+
+        //     // If ID is bigger than the received, should initiate election
+        //     if (selfID > elecValueReceived){
+        //         // TODO: Sleep shortly to avoid sending too many elections
+
+        //         // Checking if has sent this election message already
+        //         bool messageSent = false;
+        //         for (int i; i<ongoingElections.size(); i++){
+        //             if (ongoingElections[i] == msgSender) messageSent = true;
+        //         }
+
+        //         if (!messageSent){ // Hasn't sent messages for this election
+        //             char outMsg[messageLength];
+        //             sprintf( outMsg, "%i%s%i%s%i%s",
+        //                      m_eleicao, delimiter,
+        //                      msgSender, delimiter,
+        //                      selfID, delimiter );
+        //             //sendto(); BROADCAST
+        //             ongoingElections.push_back(msgSender);
+        //             // TODO: Start time counting to see if will be leader
+        //             // NOTE: WHERE IS THIS TIMER HANDLED??
+        //         }
+        //     }
+        //     // If ID is smaller than received it makes no sense to do anything else
+
+        // } else if (msgT == m_ok){
+        //     // TODO: Stop election time counting
+        //     //       Or turn on OK flag!
+        //     // TODO: Check if this erasing should't be done after some thread notices the election is over or something
+        //     ongoingElections.erase(std::remove(ongoingElections.begin(),
+        //                                         ongoingElections.end(), msgSender),
+        //                             ongoingElections.end() ); // Taken out of elections
+
+        // } else if (msgT == m_lider){
+        //     // Update leader ID
+        //     //leaderID = msgSender;   IDEALLY THE IDENTIFICATION SHOULD BE AN EASY WAY TO GET THE LEADER FROM THE PROCESSES ARRAY
+        //     // TODO: Implement locks!!
+
+        // } else if (msgT == m_vivo){
+        //     // In this case I am the leader myself, so I should answer the inquiry
+        //     char outMsg[messageLength];
+        //     sprintf( outMsg, "%i%s%i%s",
+        //              m_vivo, delimiter, selfID, delimiter );
+        //     // TODO: Send message.........
+
+        // }   else if (msgT == m_vivo_ok){
+        //     // TODO: Deal with this case
+
+        // }
     }
 }
 
@@ -183,10 +191,10 @@ void communication(){
 int main(int argc, char* argv[]){
     // TODO: Function arguments
     int myServerPort = 8080;
-    int sendPorts[N_PROC-1] = {8081, 8082, 8083, 8084};
+    int sendPorts[N_PROC-1] = {8080, 8082, 8083, 8084};
     messageLength = 1024;
     messageBuffer = new char[messageLength];
-    delimiter = "\n";
+    //delimiter = '\n';
     // ----
 
     selfID = myServerPort; // TODO: Change this
@@ -201,24 +209,38 @@ int main(int argc, char* argv[]){
     //}
     // ----
 
-    for (int i = 0; i < N_PROC-1; i++){
-        std::stringstream procName;
-        procName << "Processo" << i;
-        ProcessClient Proc(sendPorts[i], procName.str());
-        processes.push_back(Proc);
+    // for (int i = 0; i < N_PROC-1; i++){
+    //     std::stringstream procName;
+    //     procName << "Processo" << i;
+    //     ProcessClient Proc(sendPorts[i], procName.str());
+    //     processes.push_back(Proc);
+    //     cout<<"Criando processos"<<endl;
+    // }
+    std::cout<<numTimes<<endl;
+    if (numTimes==1)
+    {
+       if ( setupServerSocket(myServerPort) == -1 )
+       {
+           cout << "ERROR: Could not setup socket" << endl;
+           exit(1);
+       }
+       communication();
     }
-
-    //std::cout<<numTimes<<endl;
-    //if (numTimes==1){
-    //    if ( setupServerSocket(myServerPort) == -1 ){
-    //        cout << "ERROR: Could not setup socket" << endl;
-    //        exit(1);
-    //    }
-    //    //receiveMsgFromClients(0);
-    //} //else {
-    //  //  setupClientSocket(P1);
-    //  //  sendMsgToClient(0,P1);
-    //}
+    else
+    {
+        for (int i = 0; i < N_PROC-1; i++)
+        {
+            std::stringstream procName;
+            procName << "Processo" << i;
+            ProcessClient Proc(sendPorts[i], procName.str());
+            cout<<"Processo Criado"<<endl;
+            char client_buffer[messageLength];
+            Proc.setupClientSocket();
+            sprintf(client_buffer, "0\\1");
+            Proc.sendMessage(client_buffer);
+            processes.push_back(Proc);
+        }
+    }
     // interface();
 }
 
@@ -262,8 +284,8 @@ int setupClientSocket(ProcessClient& clientProcess){
         printf("socket created\n");
     }
     memset( (char *)&clientProcess.myaddr, 0, sizeof(clientProcess.myaddr) );
-	  clientProcess.myaddr.sin_family = AF_INET;
-	  clientProcess.myaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+	clientProcess.myaddr.sin_family = AF_INET;
+	clientProcess.myaddr.sin_addr.s_addr = htonl(INADDR_ANY);
     clientProcess.myaddr.sin_port = htons(0);
     if ( bind(client_socket, (struct sockaddr *)&clientProcess.myaddr,
               sizeof(clientProcess.myaddr)) < 0 ){
@@ -327,14 +349,13 @@ int ProcessClient::getPid(){ // NOTE: What is the usage of this?
     return (int)myPid;
 }
 
-int ProcessClient::sendMessage(char client_buffer[messageLength]){
+int ProcessClient::sendMessage(char client_buffer[]){
     socklen_t addrlen = sizeof(remaddr);
     memset((char *) &remaddr, 0, sizeof(remaddr));
     remaddr.sin_family = AF_INET;
-	  remaddr.sin_port = htons(myport);
+	remaddr.sin_port = htons(myport);
     char server[] = "127.0.0.1";
     int recvlen;
-
     if (inet_aton(server, &remaddr.sin_addr)==0){
         fprintf(stderr, "inet_aton() failed\n");
         return 1;
@@ -346,4 +367,31 @@ int ProcessClient::sendMessage(char client_buffer[messageLength]){
 	  }
 
     return 0; // If everything went fine
+}
+
+int ProcessClient::setupClientSocket(){
+    /*
+     *  Thread responsible for create a client socket
+     *
+     */
+    //struct sockaddr_in myaddr;
+    int port = myport;
+    int client_socket;
+    int recvlen;		/* # bytes in acknowledgement message */
+    char server[] = "127.0.0.1";	/* change this to use a different server */
+    if ((client_socket=socket(AF_INET, SOCK_DGRAM, 0))==-1){
+        printf("socket created\n");
+    }
+    memset( (char *)&myaddr, 0, sizeof(myaddr) );
+	myaddr.sin_family = AF_INET;
+	myaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+    myaddr.sin_port = htons(0);
+    if ( bind(client_socket, (struct sockaddr *)&myaddr,
+              sizeof(myaddr)) < 0 ){
+        perror("bind failed");
+        exit(0);
+    }
+    //client_sockets.push_back(client_socket);
+    client_socket_ID=client_socket;
+    return 1;
 }
