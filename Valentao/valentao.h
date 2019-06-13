@@ -27,9 +27,9 @@ public:
 int server_socket;         // This process' socket
 // TODO: Should it be protected by lock?
 int selfID;
-int leaderID;
+int leaderIdx;   // leaderIdx should be the position in the process vector, or -1 if the leader is the process itslef
+int selfElecValue;
 
-char* messageBuffer;
 int messageLength;
 
 char* delimiter;
@@ -41,6 +41,11 @@ std::vector<int> ongoingElections;
 
 std::vector<ProcessClient> processes;
 #define N_PROC 5      // Number of processes operating
+
+// Global flags
+bool leaderAnswered;
+bool isSilenced;
+
 
 // Message types
 enum MessageTyp {
@@ -56,13 +61,8 @@ int main(int argc, char* argv[]);
 
 void interface();
 void communication();
-//void leader();
+void leader();
 
 
 // Auxiliary funtions
-//void receiveMsgFromClients(int flag);
 int setupServerSocket(int port);
-int setupClientSocket(ProcessClient& clientProcess);
-void sendMsgToClient(int flag,ProcessClient& clientProcess);
-
-//bool checkLeader();
