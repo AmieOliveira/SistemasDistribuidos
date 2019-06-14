@@ -13,6 +13,8 @@
 #include <arpa/inet.h>
 #include <sstream>
 #include <algorithm>
+#include <pthread.h>
+#include <chrono>
 
 
 #include "valentao.h"
@@ -23,7 +25,7 @@ using namespace std;
 
 
 // User interface management
-void interface(){
+void* interface(void*){
     /*
      *  Thread responsible for the user interface
      *
@@ -61,25 +63,52 @@ void interface(){
 
         // Check current leader
         if ( strncmp(l_p, "l", 1) == 0 ){
-            cout << "Pressed L" << endl;
-            cout << "\t Checking on leader" << endl;
-            // checkLeader();
-            // TODO: Initiate leader check process.
-            // Might be better to take leader check thread out of sleep...
+            cout << "Pressed L: Checking on leader" << endl;
+
+            if (leaderIdx == -1) {
+                // TODO: lock in cout!!
+                cout << "\t Am already leader. Can't check on myself." << endl;
+            }
+            else if (ongoingElections.size() == 0){
+                cout << "\t Already in leader election. No leader to check on." << endl;
+            } else if (isCheckingOnLeader) {
+                cout << "\t Already checking on leader. Will wait for the results." << endl;
+            } else if (isOperational) {
+                cout << "\t Am emulating failure. Can't send messages "
+                     << "unless you press recovery button (R)." << endl;
+            } else {
+                isCheckingOnLeader = true;
+
+                char buffer[messageLength];
+                sprintf(buffer, "%i%s%i%s", m_vivo, delimiter,
+                                            selfID, delimiter );
+
+                cout << "Messaging process. (" << buffer << ")" << endl;
+
+                leaderAnswered = false;
+                processes[leaderIdx].sendMessage(buffer);
+
+                sleep(3); // Wait to see if there'll be an answer
+
+                isCheckingOnLeader = false;
+            }
         }
 
         // Emulate process failure
         else if ( strncmp(l_p, "f", 1) == 0 ){
-            cout << "Pressed F" << endl;
-            cout << "\t Process will emulate failure" << endl;
-            // TODO: Make process non-responsive to messages
+            // TODO: locks! (both on flag and cout)
+            cout << "Pressed F: Process will emulate failure" << endl;
+
+            isOperational = false;
+
         }
 
         // Recuperate process from (fake) failure
         else if ( strncmp(l_p, "r", 1) == 0 ){
-            cout << "Pressed R" << endl;
-            cout << "\t Process will start answering again" << endl;
-            // TODO: Make process non-responsive to messages
+            // TODO: locks! (both on flag and cout)
+            cout << "Pressed R: Process will start answering again" << endl;
+
+            isOperational = false;
         }
 
         // Print Statistics
@@ -92,7 +121,7 @@ void interface(){
 }
 
 
-void communication(){
+void* communication(void*){
     /*
      *  Thread responsible for receiving messages from other processes and
      *
@@ -141,43 +170,58 @@ void communication(){
             msgPart = strtok(NULL, delimiter);
             int elecValueReceived = atoi(msgPart);
 
-            // If ID is bigger than the received, should initiate election
-            if (selfElecValue > elecValueReceived){
-                // TODO: Sleep shortly to avoid sending too many elections
+            if (isOperational){
+                // If ID is bigger than the received, should initiate election
+                if (selfElecValue > elecValueReceived){
+                    // TODO: Sleep shortly to avoid sending too many elections
 
-                // Checking if has sent this election message already
-                bool messageSent = false;
-                for (int i; i<ongoingElections.size(); i++){
-                    if (ongoingElections[i] == msgSender) messageSent = true;
-                }
-
-                if (!messageSent){ // Hasn't sent messages for this election
-                    char outMsg[messageLength];
-                    sprintf( outMsg, "%i%s%i%s%i%s",
-                             m_eleicao, delimiter,
-                             msgSender, delimiter,
-                             selfElecValue, delimiter );
-
-                    isSilenced = false;
-
-                    // Broadcast of election message
-                    for (int i=0; i<N_PROC-1; i++){
-                        processes[i].sendMessage(outMsg);
+                    // Checking if has sent this election message already
+                    bool messageSent = false;
+                    for (int i; i<ongoingElections.size(); i++){
+                        if (ongoingElections[i] == msgSender){
+                            messageSent = true;
+                            break;
+                        }
                     }
 
-                    ongoingElections.push_back(msgSender);
-                    // TODO: Start time counting to see if will be leader
-                    // NOTE: WHERE IS THIS TIMER HANDLED??
-                    // (Possibly use a thread)
+                    if (!messageSent){ // Hasn't sent messages for this election
+                        char outMsg[messageLength];
+                        sprintf( outMsg, "%i%s%i%s%i%s",
+                                 m_eleicao, delimiter,
+                                 msgSender, delimiter,
+                                 selfElecValue, delimiter );
+
+                        isSilenced = false;
+
+                        // Broadcast of election message
+                        for (int i=0; i<N_PROC-1; i++){
+                            processes[i].sendMessage(outMsg);
+                        }
+
+                        ongoingElections.push_back(msgSender);
+
+                        // Creating auxiliar thread
+                        pthread_t threadsAux;
+                        pthread_attr_t attrAux;
+
+                        pthread_attr_init(&attrAux);
+                        pthread_attr_setdetachstate(&attrAux, PTHREAD_CREATE_DETACHED);
+
+                        pthread_create(&threadsAux, &attrAux, electionFinish, NULL );
+                    }
                 }
             }
             // If ID is smaller than received it makes no sense to do anything else
         } else if (msgT == m_ok){
             // TODO: Check if this erasing should't be done after some thread notices the election is over or something
             isSilenced = true;
-            ongoingElections.erase(std::remove(ongoingElections.begin(),
-                                                ongoingElections.end(), msgSender),
-                                    ongoingElections.end() ); // Taken out of elections
+            for (int i = 0; i < ongoingElections.size(); i++){
+              if (ongoingElections[i] == msgSender){
+                  // Take out of elections
+                  ongoingElections.erase( ongoingElections.begin()+i );
+                  break;
+              }
+            }
 
         } else if (msgT == m_lider){
             // Update leader ID
@@ -192,19 +236,18 @@ void communication(){
 
         } else if (msgT == m_vivo){
             // In this case I am the leader myself, so I should answer the inquiry
+            if (isOperational){
+                if (leaderIdx == -1){ // NOTE: If I am the leader, leaderIdx is -1
+                    char outMsg[messageLength];
+                    sprintf( outMsg, "%i%s%i%s",
+                             m_vivo_ok, delimiter, selfID, delimiter );
 
-            cout << "Received VIVO message" << endl;
-            if (leaderIdx == -1){ // NOTE: If I am the leader, leaderIdx is -1
-                char outMsg[messageLength];
-                sprintf( outMsg, "%i%s%i%s",
-                         m_vivo_ok, delimiter, selfID, delimiter );
-                // cout << "Sending VIVO_OK message back (" << outMsg << ")" << endl;
-
-                leaderAnswered = false;
-                for (int i=0; i<N_PROC-1; i++){
-                    if (processes[i].myport == msgSender){ // NOTE: Change if I change selfID configuration!!
-                        processes[i].sendMessage(outMsg);
-                        break;
+                    // Sending VIVO_OK message back
+                    for (int i=0; i<N_PROC-1; i++){
+                        if (processes[i].myport == msgSender){ // NOTE: Change if I change selfID configuration!!
+                            processes[i].sendMessage(outMsg);
+                            break;
+                        }
                     }
                 }
             } else {
@@ -213,35 +256,49 @@ void communication(){
             // TODO: Check this
 
         }   else if (msgT == m_vivo_ok){
-            leaderAnswered = true;
+            if (msgSender == processes[leaderIdx].myport)
+                leaderAnswered = true;
+            else {
+                // TODO: Put locks into every cout!!
+                cout << "ERROR: Received leader aliveness confirmation from process that isn't the leader" << endl;
+            }
             // TODO: Check if there's something else
         }
     }
 }
 
 
-void leader(){
+void* leader(void*){
     /*
      *  Thread responsible for checking current leader
      *
      */
     cout << "In leader check thread" << endl;
 
+    // TODO: lock!!
+    isCheckingOnLeader = false;
+
     while (1){
         // TODO: If I am not leader, send messafe to leader. Check if message was received
-        if (leaderIdx == -1){ // NOTE: If I am the leader, leaderIdx is -1
+        if (leaderIdx == -1 || !isOperational){ // NOTE: If I am the leader, leaderIdx is -1
             sleep(100);
 
-        } else {
+        } else if ( !isCheckingOnLeader && (ongoingElections.size() != 0) ) {
+            // If I am not checking leader nor running an election, I should check the leader!
+            isCheckingOnLeader = true;
+
             char buffer[messageLength];
             sprintf(buffer, "%i%s%i%s", m_vivo, delimiter,
                                         selfID, delimiter );
 
-            cout << "Messaging process. (" << buffer << ")" << endl;
+            cout << "Messaging leader. (" << buffer << ")" << endl;
 
+            leaderAnswered = false;
             processes[leaderIdx].sendMessage(buffer);
 
             sleep(3); // Wait to see if there'll be an answer
+
+            isCheckingOnLeader = false;
 
             // TODO: locks!!
             if (!leaderAnswered){ // No answer from leader
@@ -263,14 +320,20 @@ void leader(){
                 }
 
                 ongoingElections.push_back(selfID);
-                // TODO: Start time counting to see if will be leader
-                // NOTE: WHERE IS THIS TIMER HANDLED??
-                // (Possibly use a thread)
 
-                // TODO: End of elections!!
+                // Creating auxiliar thread
+                pthread_t threadsAux;
+                pthread_attr_t attrAux;
+
+                pthread_attr_init(&attrAux);
+                pthread_attr_setdetachstate(&attrAux, PTHREAD_CREATE_DETACHED);
+
+                pthread_create(&threadsAux, &attrAux, electionFinish, NULL );
+                // TODO: Check
 
             } // else { cout << "Leader ok" << endl; }
-
+            sleep(100);
+        } else {
             sleep(100);
         }
     }
@@ -283,6 +346,7 @@ int main(int argc, char* argv[]){
     messageLength = 1024;
     delimiter = new char[2];
     sprintf(delimiter, "\\");
+    isOperational = true; // TODO: locks!
     // ----
 
     cout << "Delimiter = " << delimiter << endl;
@@ -303,19 +367,10 @@ int main(int argc, char* argv[]){
     selfElecValue = myServerPort; // TODO: Change this (PID, for example)
     // ----
 
-    // for (int i = 0; i < N_PROC-1; i++){
-    //     std::stringstream procName;
-    //     procName << "Processo" << i;
-    //     ProcessClient Proc(sendPorts[i], procName.str());
-    //     processes.push_back(Proc);
-    //     cout<<"Criando processos"<<endl;
-    // }
-
     if ( setupServerSocket(myServerPort) == -1 ) {
         cout << "ERROR: Could not setup socket" << endl;
         exit(1);
     }
-
 
     int idx = 0;
     for (int i = 0; i < N_PROC; i++) {
@@ -343,17 +398,44 @@ int main(int argc, char* argv[]){
         }
 
         idx++;
-        // char client_buffer[messageLength];
-        // sprintf(client_buffer, "0\\1");
-        // Proc.sendMessage(client_buffer);
     }
 
-    // interface();
-    // communication();
-    leader();
+    int threadResponse[3];
+    int threadStatus;
+    pthread_t threads[3];
+    pthread_attr_t attr;
+    void* status;
+
+    // Initialize and set thread joinable
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+    cout << "Creating threads" << endl;
+
+    threadResponse[0] = pthread_create(&threads[0], &attr, interface, NULL );
+    threadResponse[1] = pthread_create(&threads[0], &attr, communication, NULL );
+    threadResponse[2] = pthread_create(&threads[0], &attr, leader, NULL );
+
+    for( int i = 0; i < 3; i++ ) {
+        if (threadResponse[i]){
+        cout << "Error:unable to create thread," << threadResponse[i] << endl;
+        exit(-1);
+        }
+    }
+
+    // free attribute and wait for the other threads
+    pthread_attr_destroy(&attr);
+    for( int i = 0; i < 3; i++ ) {
+       threadStatus = pthread_join(threads[i], &status);
+       if (threadStatus) {
+          cout << "Error:unable to join," << threadStatus << endl;
+          exit(-1);
+       }
+       cout << "Main: completed thread " << i ;
+       cout << "  Exiting with status :" << status << endl;
+    }
+
+    cout << "Main: program exiting." << endl;
 }
-
-
 
 
 
@@ -361,9 +443,7 @@ int main(int argc, char* argv[]){
 // Auxiliary Functions ----------------------------------------------------------
 
 int setupServerSocket(int port){
-    /*
-     *  Thread responsible for create a server socket
-     *
+    /* Funtion to create a server socket
      */
     struct sockaddr_in address;
     address.sin_family = AF_INET;
@@ -379,7 +459,30 @@ int setupServerSocket(int port){
 }
 
 
-// ProcessClient class
+void* electionFinish(void*){
+    /* Thread to wait out for election results and execute end of election procedures
+     */
+    sleep(5);
+
+    if (!isSilenced){
+        // No OK message was received. Therefore I am the current leader
+        leaderIdx = -1;
+
+        char outMsg[messageLength];
+        sprintf(outMsg, "%i%s%i%s", m_lider, delimiter,
+                                    selfID, delimiter  );
+
+        // Broadcast new leader message
+        for (int i=0; i<N_PROC-1; i++){
+            processes[i].sendMessage(outMsg);
+        }
+    }
+
+    pthread_exit(NULL);
+}
+
+
+// ProcessClient class ----------------------------------------------------------
 ProcessClient::ProcessClient(int port, string name){
     myPid = getpid();
     processName = name;
@@ -391,10 +494,13 @@ int ProcessClient::getPid(){ // NOTE: What is the usage of this?
 }
 
 int ProcessClient::sendMessage(char client_buffer[]){
+    // TODO: Comment this out
+    cout << "Sending message '" << client_buffer << "' to process " << myport << endl;
+
     socklen_t addrlen = sizeof(remaddr);
     memset((char *) &remaddr, 0, sizeof(remaddr));
     remaddr.sin_family = AF_INET;
-	remaddr.sin_port = htons(myport);
+    remaddr.sin_port = htons(myport);
     char server[] = "127.0.0.1";
     int recvlen;
     if (inet_aton(server, &remaddr.sin_addr)==0){
@@ -424,8 +530,8 @@ int ProcessClient::setupClientSocket(){
         printf("socket created\n");
     }
     memset( (char *)&myaddr, 0, sizeof(myaddr) );
-	myaddr.sin_family = AF_INET;
-	myaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+	  myaddr.sin_family = AF_INET;
+	  myaddr.sin_addr.s_addr = htonl(INADDR_ANY);
     myaddr.sin_port = htons(0);
     if ( bind(client_socket, (struct sockaddr *)&myaddr,
               sizeof(myaddr)) < 0 ){

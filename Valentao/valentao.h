@@ -42,9 +42,16 @@ std::vector<int> ongoingElections;
 std::vector<ProcessClient> processes;
 #define N_PROC 5      // Number of processes operating
 
+// std::chrono::high_resolution_clock::time_point start_time;
+// std::chrono::high_resolution_clock::time_point actual_time;
+
+
 // Global flags
+bool isOperational;
 bool leaderAnswered;
 bool isSilenced;
+bool isCheckingOnLeader;
+// bool resetTimer=false;
 
 
 // Message types
@@ -59,10 +66,11 @@ enum MessageTyp {
 // Main funtions
 int main(int argc, char* argv[]);
 
-void interface();
-void communication();
-void leader();
+void* interface(void*);
+void* communication(void*);
+void* leader(void*);
 
 
 // Auxiliary funtions
 int setupServerSocket(int port);
+void* electionFinish(void*);
