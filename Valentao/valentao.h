@@ -36,6 +36,7 @@ char* delimiter;
 
 int msgCount[5] = {0, 0, 0, 0, 0};
 int outMsgCount = 0;
+int inMsgCount = 0;
 
 std::vector<int> ongoingElections;
 

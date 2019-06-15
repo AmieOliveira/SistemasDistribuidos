@@ -69,7 +69,7 @@ void* interface(void*){
                 // TODO: lock in cout!!
                 cout << "\t Am already leader. Can't check on myself." << endl;
             }
-            else if (ongoingElections.size() == 0){
+            else if (ongoingElections.size() != 0){
                 cout << "\t Already in leader election. No leader to check on." << endl;
             } else if (isCheckingOnLeader) {
                 cout << "\t Already checking on leader. Will wait for the results." << endl;
@@ -87,6 +87,7 @@ void* interface(void*){
 
                 leaderAnswered = false;
                 processes[leaderIdx].sendMessage(buffer);
+                outMsgCount++;
 
                 sleep(3); // Wait to see if there'll be an answer
 
@@ -113,9 +114,21 @@ void* interface(void*){
 
         // Print Statistics
         else if ( strncmp(l_p, "s", 1) == 0 ){
-            cout << "Pressed S" << endl;
-            cout << "\t Printing statistcs" << endl;
+            cout << "Pressed S: Printing statistcs" << endl;
             // TODO: Make process non-responsive to messages
+            cout << "---------------------------" << endl;
+            if (leaderIdx == -1) {
+                cout << "| leader          |  " << selfID << " |" << endl;
+            } else {
+                cout << "| leader          |  " << processes[leaderIdx].myport << " |" << endl;
+            }
+            cout << "---------------------------" << endl;
+            cout << " Message counting: " << endl;
+            cout << "     - ELEICAO -> " << msgCount[m_eleicao] << endl;
+            cout << "     - OK -> " << msgCount[m_ok] << endl;
+            cout << "     - LIDER -> " << msgCount[m_lider] << endl;
+            cout << "     - VIVO -> " << msgCount[m_vivo] << endl;
+            cout << "     - VIVO_OK -> " << msgCount[m_vivo_ok] << endl;
         }
     }
 }
@@ -130,7 +143,6 @@ void* communication(void*){
 
     struct sockaddr_in client_address;
     socklen_t addrlen = sizeof(client_address);
-    int totCount = 0;
 
     while (true){
         char buffer[messageLength];
@@ -141,11 +153,11 @@ void* communication(void*){
         // inet_ntoa prints user friendly representation of the
         // ip address
         if (recvlen>0){
-          buffer[recvlen] = 0;
-          printf("received: '%s' from client %s , Count:%d\n", buffer,
-                 inet_ntoa(client_address.sin_addr),totCount);
+            buffer[recvlen] = 0;
+            printf("received: '%s' from client %s , Count:%d\n", buffer,
+                   inet_ntoa(client_address.sin_addr), inMsgCount);
         }
-        totCount++;
+        inMsgCount++;
 
         // Interpreting message
         char* msgPart;
@@ -197,6 +209,7 @@ void* communication(void*){
                         for (int i=0; i<N_PROC-1; i++){
                             processes[i].sendMessage(outMsg);
                         }
+                        outMsgCount++;
 
                         ongoingElections.push_back(msgSender);
 
@@ -246,12 +259,13 @@ void* communication(void*){
                     for (int i=0; i<N_PROC-1; i++){
                         if (processes[i].myport == msgSender){ // NOTE: Change if I change selfID configuration!!
                             processes[i].sendMessage(outMsg);
+                            outMsgCount++;
                             break;
                         }
                     }
+                } else {
+                    cout << "ERROR: Received leader check message when I am not the leader" << endl;
                 }
-            } else {
-                cout << "ERROR: Received leader check message when I am not the leader" << endl;
             }
             // TODO: Check this
 
@@ -281,9 +295,11 @@ void* leader(void*){
     while (1){
         // TODO: If I am not leader, send messafe to leader. Check if message was received
         if (leaderIdx == -1 || !isOperational){ // NOTE: If I am the leader, leaderIdx is -1
-            sleep(100);
+            sleep(20);
 
-        } else if ( !isCheckingOnLeader && (ongoingElections.size() != 0) ) {
+        } else if ( (!isCheckingOnLeader) && (ongoingElections.size() == 0) ) {
+            cout << "Will check on leader" << endl;
+
             // If I am not checking leader nor running an election, I should check the leader!
             isCheckingOnLeader = true;
 
@@ -295,6 +311,7 @@ void* leader(void*){
 
             leaderAnswered = false;
             processes[leaderIdx].sendMessage(buffer);
+            outMsgCount++;
 
             sleep(3); // Wait to see if there'll be an answer
 
@@ -318,6 +335,7 @@ void* leader(void*){
                 for (int i=0; i<N_PROC-1; i++){
                     processes[i].sendMessage(outMsg);
                 }
+                outMsgCount++;
 
                 ongoingElections.push_back(selfID);
 
@@ -332,9 +350,9 @@ void* leader(void*){
                 // TODO: Check
 
             } // else { cout << "Leader ok" << endl; }
-            sleep(100);
+            sleep(20);
         } else {
-            sleep(100);
+            sleep(20);
         }
     }
 }
@@ -476,6 +494,7 @@ void* electionFinish(void*){
         for (int i=0; i<N_PROC-1; i++){
             processes[i].sendMessage(outMsg);
         }
+        outMsgCount++;
     }
 
     pthread_exit(NULL);
