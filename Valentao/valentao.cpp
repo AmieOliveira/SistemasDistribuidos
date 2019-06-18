@@ -16,7 +16,9 @@
 #include <pthread.h>
 #include <chrono>
 #include <mutex>
-
+#include <stdio.h>      /* printf, scanf, puts, NULL */
+#include <stdlib.h>     /* srand, rand */
+#include <time.h>       /* time */
 #include "valentao.h"
 
 
@@ -29,7 +31,7 @@ void* interface(void*){
      *
      */
     cout << "In interface thread" << endl;
-    cout<< "Press [(L):Cheking on Leader] - [(F):Emulate failure] - [(R):Recover from failure] - [(S):Print Statistics]"<<endl;
+    cout<< "Press [(L):Cheking on Leader] - [(F):Emulate failure] - [(R):Recover from failure] - [(S):Print Statistics] - [(0)-Stop printing]"<<endl;
 
     // Setup to read keys
     struct termios oldSettings, newSettings;
@@ -59,6 +61,7 @@ void* interface(void*){
             break;
         }
 
+        // Check current leader
         if ( strncmp(l_p, "l", 1) == 0 ){
             cout << "Pressed L: Checking on leader" << endl;
 
@@ -86,6 +89,7 @@ void* interface(void*){
 
                 set_leaderAnswered(false);
                 processes[get_leaderIdx()].sendMessage(buffer);
+                //increasing_msgCount(m_vivo);
 
                 increment_outMsgCount();
 
@@ -123,7 +127,6 @@ void* interface(void*){
             int temp_inMsgCount = get_inMsgCount();
             int temp_outMsgCount = get_outMsgCount();
             mtx_msgCount.lock();
-            cout << endl;
             cout << "---------------------------" << endl;
             cout << " Message counting  "<<endl;
             cout << "     - ELEICAO -> " << msgCount[m_eleicao] << endl;
@@ -134,7 +137,6 @@ void* interface(void*){
             cout<<"Total Msgs Election: "<<temp_totalElectionMsgs<<endl;
             cout<<"Total Msgs Received: "<<temp_inMsgCount<<endl;
             cout<<"Total Msgs Sent: "<<temp_outMsgCount<<endl;
-            cout << endl;
             mtx_msgCount.unlock();
         }
     }
@@ -152,6 +154,9 @@ void* communication(void*){
     socklen_t addrlen = sizeof(client_address);
 
     while (true){
+        // cout<<"Total Msgs Received: "<<inMsgCount<<endl;
+        // cout<<"Total Msgs Sent: "<<(get_outMsgCount())<<endl;
+
         char buffer[messageLength];
         // read content into buffer from an incoming client
         int recvlen = recvfrom( server_socket, buffer, sizeof(buffer), 0,
@@ -160,7 +165,9 @@ void* communication(void*){
 
         if (recvlen>0){
             buffer[recvlen] = 0;
-            increment_inMsgCount();
+            if(online){
+                increment_inMsgCount();
+            }
             printf("  \033[93m Received message\033[0m '%s' from client %s , Count:%d\n", buffer,
                    inet_ntoa(client_address.sin_addr), get_inMsgCount());
         }
@@ -175,7 +182,18 @@ void* communication(void*){
             msgPart = strtok(buffer, delimiter);
             msgT = atoi(msgPart);   // Message type number
 
+            if(online){
+            mtx_msgCount.lock();
+            msgCount[msgT]++;
+            mtx_msgCount.unlock();
             increasing_msgCount(msgT);
+            int temp_totalElectionMsgs;
+            mtx_msgCount.lock();
+            temp_totalElectionMsgs = msgCount[m_eleicao]+msgCount[m_ok]+msgCount[m_lider];
+            mtx_msgCount.unlock();
+            set_totalElectionMsgs(temp_totalElectionMsgs);
+            }
+
 
             msgPart = strtok(NULL, delimiter);
             msgSender = atoi(msgPart);
@@ -188,13 +206,11 @@ void* communication(void*){
 
             msgPart = strtok(NULL, delimiter);
             int elecValueReceived = atoi(msgPart);
-            if (get_isOperational()){
+            if (get_isOperational()&& (online)){
                 //Stop any leader check nor operations
                 set_isOperational(false);
                 // If ID is bigger than the received, should initiate election
                 if (selfElecValue > elecValueReceived){
-                    // TODO: Sleep shortly to avoid sending too many elections
-
                     // Checking if has sent this election message already
                     bool messageSent = false;
                     electionVectorMutex.lock();
@@ -221,14 +237,18 @@ void* communication(void*){
 
                             }
                         }
+                        if(online){
                         increment_outMsgCount();
+                        }
                         //electionVectorMutex.lock();
                         //ongoingElections.push_back(msgSender);
                         //electionVectorMutex.unlock();
-
                         //Creating auxiliar thread
                         //sleep(5);
                         erase_ongoingElections();
+                        mtx_maior_ID.lock();
+                        //maior_ID = false;
+                        mtx_maior_ID.unlock();
                         set_isOperational(true);
                         set_isCheckingOnLeader(false);
                         set_outElection(false);
@@ -240,11 +260,12 @@ void* communication(void*){
                         // pthread_create(&threadsAux, &attrAux, leader, NULL );
                     }
                 }
+                //set_isSilenced(true);
+                //maior_ID = true;
                 set_isOperational(true);
             }
             // If ID is smaller than received it makes no sense to do anything else
         } else if (msgT == m_ok){
-            // TODO: Check if this erasing should't be done after some thread notices the election is over or something
             set_isSilenced(true);
             electionVectorMutex.lock();
             for (int i = 0; i < ongoingElections.size(); i++){
@@ -258,6 +279,7 @@ void* communication(void*){
 
         } else if (msgT == m_lider){
             // Update leader ID
+            set_isOperational(true);
             set_outElection(true);
             set_isSilenced(false);
             for (int i=0; i<N_PROC-1; i++){
@@ -266,6 +288,7 @@ void* communication(void*){
                     break;
                 }
             }
+            maior_ID=false;
             erase_ongoingElections();
             set_electionNumber();
             set_alreadyOnThreadleader(false);
@@ -273,7 +296,7 @@ void* communication(void*){
 
         } else if (msgT == m_vivo){
             // In this case I am the leader myself, so I should answer the inquiry
-            if (get_isOperational()){
+            if (get_isOperational() && (online)){
                 if ((get_leaderIdx()) == -1){ // NOTE: If I am the leader, leaderIdx is -1
                     char outMsg[messageLength];
                     sprintf( outMsg, "%i%s%i%s",
@@ -284,7 +307,10 @@ void* communication(void*){
                         if (processes[i].myport == msgSender){ // NOTE: Change if I change selfID configuration!!
                             processes[i].sendMessage(outMsg);
                             //increasing_msgCount(m_vivo_ok);
+                            if(online){
+                            increasing_msgCount(m_vivo_ok);
                             increment_outMsgCount();
+                            }
                             break;
                         }
                     }
@@ -292,9 +318,8 @@ void* communication(void*){
                     cout << "ERROR: Received leader check message when I am not the leader" << endl;
                 }
             }
-            // TODO: Check this
 
-        }   else if (msgT == m_vivo_ok){
+        } else if (msgT == m_vivo_ok){
             mtx_vivo_ok.lock();
             number_vivo_ok++;
             mtx_vivo_ok.unlock();
@@ -304,14 +329,7 @@ void* communication(void*){
             else {
                 cout << "ERROR: Received leader aliveness confirmation from process that isn't the leader" << endl;
             }
-            // TODO: Check if there's something else
         }
-
-        int temp_totalElectionMsgs;
-        mtx_msgCount.lock();
-        temp_totalElectionMsgs = msgCount[m_eleicao]+msgCount[m_ok]+msgCount[m_lider];
-        mtx_msgCount.unlock();
-        set_totalElectionMsgs(temp_totalElectionMsgs);
     }
 }
 
@@ -324,12 +342,13 @@ void* leader(void*){
     cout << "In leader check thread" << endl;
 
     set_isCheckingOnLeader(false);
-
+    int delay = 0;
     while (1){
-        if ( (get_leaderIdx() == -1) || !(get_isOperational()) ){ // NOTE: If I am the leader, leaderIdx is -1
+        if ((get_leaderIdx()) == -1 || (!(get_isOperational()))){ // NOTE: If I am the leader, leaderIdx is -1
             sleep(20);
+            //cout<<"Leader Sleeping"<<endl;
 
-        } else if ( (!(get_isCheckingOnLeader())) && (get_electionSize() == 0) && (!(get_isSilenced())) ) {
+        } else if ( (!(get_isCheckingOnLeader())) && ((get_electionSize()) == 0) && (online) &&(electionfinished)&& (!(get_isSilenced()))) {
             cout << "Will check on leader" << endl;
 
             // If I am not checking leader nor running an election, I should check the leader!
@@ -343,14 +362,21 @@ void* leader(void*){
 
             set_leaderAnswered(false);
             processes[get_leaderIdx()].sendMessage(buffer);
+            increasing_msgCount(m_vivo);
+            if(online){
             increment_outMsgCount();
+            }
 
-            sleep(5); // Wait to see if there'll be an answer
+            //sleep(5); // Wait to see if there'll be an answer
+            //delay = rand() % 10 + 1;
+            //cout<<"Delay||"<<delay<<endl;
+            //sleep(delay);
+            sleep(8096-myactualport);
 
             set_isCheckingOnLeader(false);
 
-            if ((!(get_leaderAnswered())) && (!(get_outElection())) && (get_electionSize() == 0) ){ // No answer from leader
-                // TODO: Put timer to delay beginning
+            if ((!(get_leaderAnswered())) && (!(get_outElection()))){ // No answer from leader
+                electionfinished=false;
                 cout << "No leader! Start election!" << endl;
 
                 // Initiating election
@@ -365,12 +391,16 @@ void* leader(void*){
                 // Broadcast of election message
                 for (int i=0; i<N_PROC-1; i++){
                     processes[i].sendMessage(outMsg);
+                    if(online){
+                        increasing_msgCount(m_eleicao);
+                    }
                 }
-                increment_outMsgCount();
+                if(online){
+                    increment_outMsgCount();
+                }
                 electionVectorMutex.lock();
                 ongoingElections.push_back(selfID);
                 electionVectorMutex.unlock();
-
                 // Creating auxiliar thread
                 pthread_t threadsAux;
                 pthread_attr_t attrAux;
@@ -400,20 +430,17 @@ int main(int argc, char* argv[]){
     sprintf(delimiter, "\\");
     set_isOperational(true);
     // ----
-
+    srand (time(NULL));
     cout << "Delimiter = " << delimiter << endl;
 
     // Function arguments
     if (argc < 3){
         cout << "ERROR: Enter PORT_NUMBER PROCESS_TOTAL [CASE]." << endl;
         return 1;
-    } else if (argc == 3) {
-        caseNumber = 0;
-    } else {
-        caseNumber = atoi(argv[3]);
     }
 
     int myServerPort = atoi(argv[1]);
+    myactualport = myServerPort;
     N_PROC = atoi(argv[2]);
 
     if ( (myServerPort < 8080) || (myServerPort > 8079 + N_PROC) ){
@@ -458,7 +485,6 @@ int main(int argc, char* argv[]){
 
         idx++;
     }
-
     int THREAD_NUMBER=4;
     int threadResponse[THREAD_NUMBER];
     int threadStatus;
@@ -528,7 +554,7 @@ void* electionFinish(void*){
     mtx_vivo_ok.lock();
     temp=number_vivo_ok;
     mtx_vivo_ok.unlock();
-    sleep(10);
+    sleep(20);
     mtx_vivo_ok.lock();
     temp_after=number_vivo_ok;
     mtx_vivo_ok.unlock();
@@ -545,13 +571,17 @@ void* electionFinish(void*){
         // Broadcast new leader message
         for (int i=0; i<N_PROC-1; i++){
             processes[i].sendMessage(outMsg);
-            //increasing_msgCount(m_lider);
+            if(online){
+            increasing_msgCount(m_lider);
+            }
 
         }
+        if(online){
         increment_outMsgCount();
+        }
         set_electionNumber();
     }
-
+    electionfinished=true;
     pthread_exit(NULL);
 }
 
@@ -567,7 +597,7 @@ void *caseResolver(void*){
             //     cout << "\t\t\t\t\t\t | Leader  |  " << processes[get_leaderIdx()].myport<<"|\tElection Number:"<<(get_electionNumber())<<endl;
             // }
             numberOftimes = get_electionNumber();
-            if(numberOftimes==10){
+            if(numberOftimes==5){
                 cout<<"------------------------------------------------------------------------------------------------------"<<endl;
                 cout<<"\t\t\tCompleted 10 Elections"<<endl;
                 cout<<"\t\t\tTotal Msgs Election: "<<(get_totalElectionMsgs())<<endl;
@@ -587,7 +617,7 @@ void *caseResolver(void*){
                 msgLiderbefore = msgCount[m_lider];
                 mtx_msgCount.unlock();
                 while(true){
-                    sleep(40);
+                    sleep(100);
                     mtx_msgCount.lock();
                     diff = (msgCount[m_lider] - msgLiderbefore);
                     mtx_msgCount.unlock();
@@ -616,6 +646,7 @@ void *caseResolver(void*){
     if(caseNumber==2){
         int onfailure;
         int temp_numberOftimes=0;
+        int diff=0;
         int numberMsgs=0;
          while(true){
             if ((get_leaderIdx()) == -1) {
@@ -623,16 +654,19 @@ void *caseResolver(void*){
             } else {
                 cout << "\t\t\t\t\t\t | Leader  |  " << processes[get_leaderIdx()].myport<<"|\tElection Number:"<<(get_electionNumber())<<endl;
             }
-            numberMsgs = get_inMsgCount()+get_outMsgCount();
-            sleep(10);
+            mtx_msgCount.lock();
+            numberMsgs = msgCount[m_eleicao]+msgCount[m_lider];
+            mtx_msgCount.unlock();
+            //sleep(10);
             if((get_leaderIdx()) == -1)
             {
                 sleep(10);
-                set_isOperational(false);
+                online = false;
+                cout<<"Setting Online: false"<<online<<endl;
                 cout<<"\t******************************"<<endl;
                 cout<<"\t* Lider : Simulating Failure *"<<endl;
                 cout<<"\t******************************"<<endl;
-                onfailure=1;
+                onfailure=true;
                 sleep(10);
 
             }
@@ -640,10 +674,15 @@ void *caseResolver(void*){
                 cout<<"\t******************************"<<endl;
                 cout<<"\t*      Simulating Failure    *"<<endl;
                 cout<<"\t******************************"<<endl;
+                sleep(20);
             }
-            sleep(10);
-            temp_numberOftimes = get_inMsgCount()+get_outMsgCount();
-            if(temp_numberOftimes==numberMsgs){
+            sleep(20);
+            if ((get_leaderIdx()) != -1) {
+                mtx_msgCount.lock();
+                diff = processes[get_leaderIdx()].myport;
+                mtx_msgCount.unlock();
+            }
+            if(diff==8081){
                 cout<<"------------------------------------------------------------------------------------------------------"<<endl;
                 cout<<"\t\t\tCompleted Elections"<<"|\tElection Number:"<<(get_electionNumber())<<endl;
                 cout<<"\t\t\tTotal Msgs Election: "<<(get_totalElectionMsgs())<<endl;
@@ -675,7 +714,6 @@ int ProcessClient::getPid(){ // NOTE: What is the usage of this?
 }
 
 int ProcessClient::sendMessage(char client_buffer[]){
-    // TODO: Comment this out
     cout << " \033[91m Sending message \033[0m '" << client_buffer << "' to process " << myport << endl;
 
     socklen_t addrlen = sizeof(remaddr);
